@@ -2166,7 +2166,7 @@ uint64_t PermuteOp::Emit(VectorKernel &k) {
   return EmitCopy(insn_, xbuf_, lhs_->xbuf_, ndd_.stride_back() * ITEM_SIZE[type_id_]);
 }
 
-NDObject *PermuteOp::Clone(CloneHelper &h) { return new PermuteOp(h.GetClone(lhs_), dims_ref_); }
+NDObject *PermuteOp::Clone(CloneHelper &h) { return new PermuteOp(h.GetClone(lhs_), h.GetClone(dims_ref_)); }
 
 void PermuteOp::Dump(bool verbose, std::ostringstream &oss) { oss << "Permute"; }
 
@@ -2825,7 +2825,7 @@ void BroadcastOp::Normalize(std::vector<NDObject *> &run_ops) {
 
 NDObject *BroadcastOp::Clone(CloneHelper &h) {
   auto lhs = stuff_ops_.empty() ? lhs_ : stuff_ops_.front()->lhs_;
-  return new BroadcastOp(h.GetClone(lhs), dst_shape_ref_);
+  return new BroadcastOp(h.GetClone(lhs), h.GetClone(dst_shape_ref_));
 }
 
 void BroadcastOp::ShapeProp(NDObject *op, int64_t &sym_dim_next) {
