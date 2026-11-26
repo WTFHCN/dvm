@@ -26,11 +26,7 @@ OBJ += msprof.o comm.o
 CFLAGS = --std=c++17 -Werror -Wall -I./include -I${ASCEND_HOME_PATH}/include -I${ASCEND_HOME_PATH}/pkg_inc ${DVM_CUSTOM_FLAGS} -fPIC -fvisibility=hidden
 CFLAGS += -fstack-protector-all -Wno-array-bounds
 LDFLAGS += -Wl,-z,relro,-z,now,-z,noexecstack
-CANN_HCC := $(ASCEND_HOME_PATH)/toolkit/toolchain/hcc
-CANN_HCC_TARGET = $(shell $(firstword $(wildcard $(CANN_HCC)/bin/*-g++)) -dumpmachine)
-CCE_HCC_FLAGS = --target=$(CANN_HCC_TARGET) --gcc-toolchain=$(CANN_HCC) \
-                 --sysroot=$(CANN_HCC)/sysroot
-CCE_FLGAS_C220 = --std=c++17 $(CCE_HCC_FLAGS) -Wno-int-to-pointer-cast\
+CCE_FLGAS_C220 = --std=c++17 -Wno-int-to-pointer-cast\
 				 --cce-aicore-only\
                  --cce-auto-sync=off \
                  -mllvm -cce-aicore-function-stack-size=16000 \
@@ -39,7 +35,12 @@ CCE_FLGAS_C220 = --std=c++17 $(CCE_HCC_FLAGS) -Wno-int-to-pointer-cast\
                  -mllvm -cce-aicore-jump-expand=true \
                  -mllvm -cce-aicore-mask-opt=false
 
-CCE_FLGAS_C310 = --std=c++17 $(CCE_HCC_FLAGS) -Wno-int-to-pointer-cast\
+# Use CANN's libstdc++ for the C++17 type traits in C310 AscendC headers.
+CANN_HCC := $(ASCEND_HOME_PATH)/toolkit/toolchain/hcc
+CANN_HCC_TARGET = $(shell $(firstword $(wildcard $(CANN_HCC)/bin/*-g++)) -dumpmachine)
+CCE_FLGAS_C310 = --std=c++17 --target=$(CANN_HCC_TARGET) \
+                 --gcc-toolchain=$(CANN_HCC) --sysroot=$(CANN_HCC)/sysroot \
+                 -Wno-int-to-pointer-cast \
                  --cce-aicore-only \
                  --cce-auto-sync=off \
                  --cce-simd-vf-fusion=true \
