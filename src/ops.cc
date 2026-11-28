@@ -91,24 +91,26 @@ static const vSimdInsnID cast_id_list[DataType::kDataTypeEnd][DataType::kDataTyp
 static const vSimdInsnID reduce_x_list[][ReduceType::kReduceTypeEnd] = {
   {V_NONE, V_NONE, V_NONE},                // V_BOOL
   {V_NONE, V_RMAX_X_FP16, V_RMIN_X_FP16},  // V_FLOAT16
-  {V_NONE, V_NONE, V_NONE},                // V_BFLOAT16
+  {V_NONE, V_RMAX_X_BF16, V_RMIN_X_BF16},  // V_BFLOAT16
   {V_RSUM_X, V_RMAX_X, V_RMIN_X},          // V_FLOAT32
 };
 
 static const vSimdInsnID reduce_y_list[][ReduceType::kReduceTypeEnd] = {
   {V_NONE, V_NONE, V_NONE},                // V_BOOL
   {V_NONE, V_RMAX_Y_FP16, V_RMIN_Y_FP16},  // V_FLOAT16
-  {V_NONE, V_NONE, V_NONE},                // V_BFLOAT16
+  {V_NONE, V_RMAX_Y_BF16, V_RMIN_Y_BF16},  // V_BFLOAT16
   {V_RSUM_Y, V_RMAX_Y, V_RMIN_Y},          // V_FLOAT32
 };
 
 static const scode_t reduce_init_value[][ReduceType::kReduceTypeEnd] = {
   {0, 0, 0},                    // V_BOOL
   {0, 0xFC00, 0x7C00},          // V_FLOAT16
-  {0, 0, 0},                    // V_BFLOAT16
+  {0, 0xFF80, 0x7F80},          // V_BFLOAT16
   {0, 0xFF800000, 0x7F800000},  // V_FLOAT32
 };
 
+static const vSimdInsnID atomic_cum_id_list[DataType::kDataTypeEnd] = {
+  V_NONE, V_ATOMICCUM_FP16, V_ATOMICCUM_BF16, V_ATOMICCUM, V_NONE, V_NONE};
 static const vSimdInsnID removepad_id_list[SIMD_DTYPE_END] = {V_NONE, V_REMOVEPAD_U16, V_REMOVEPAD_U16, V_REMOVEPAD, V_REMOVEPAD};
 
 uint64_t EmitCopy(bcodeptr_t insn, uint64_t xd, uint64_t xn, uint64_t bytes) {
@@ -188,7 +190,7 @@ void UpdateRoundTile(bool pointwise, int64_t num, DimArray &round_tile) {
 }
 
 scode_t GetRedInitScalarEncode(int red_op, DataType op_type) {
-  ASSERT(op_type == kFloat32 || op_type == kFloat16);
+  ASSERT(op_type == kFloat32 || op_type == kFloat16 || op_type == kBFloat16);
   return reduce_init_value[op_type][red_op];
 }
 
@@ -3199,7 +3201,7 @@ uint64_t ReduceOp::Emit(VectorKernel &k) {
     op.round_rank = round_tile_.size();
     op.red_op = red_op_;
     tail_insn_ = insn_ + size;
-    size += vAtomicCum::Encode(tail_insn_, type_id_ == kFloat32 ? V_ATOMICCUM : V_ATOMICCUM_FP16, op, rounds);
+    size += vAtomicCum::Encode(tail_insn_, atomic_cum_id_list[type_id_], op, rounds);
     *(tail_insn_) |= 0x1ul << V_HEAD_BAR_FLAG_OFFSET;
     flags_ |= OBJ_FLAG_REDUCE_EMIT_CUM;
   }

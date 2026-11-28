@@ -16,6 +16,7 @@
 import copy
 import pytest
 import numpy as np
+import dvm
 from dvm.tester import Tester
 from tests.mark_utils import arg_mark
 
@@ -130,6 +131,68 @@ def test_reduce_fp16(dvm_op, np_op, in_shape, dims):
     res = np_op(a, dims, keepdims=True)
     t.store_expect(y, res, 1e-4)
     assert (t.run_check())
+
+
+@arg_mark(plat_marks=['platform_ascend910b'], level_mark='level0', card_mark='onecard', essential_mark='essential')
+@pytest.mark.skipif(dvm.Device.arch() != 'AscendC310', reason='BF16 min/max reduction requires C310')
+@pytest.mark.parametrize('op, reference, sign', [(Tester.max, np.max, -1), (Tester.min, np.min, 1)])
+@pytest.mark.parametrize('shape, dims, keepdims', [
+    ((129, 31), (-1,), False),       # packed rows with padding
+    ((65, 79), (1,), True),          # one partial vector per row
+    ((65, 513), (1,), False),        # multiple vectors and a tail
+    ((129, 9, 32), (1,), False),     # non-last axis
+    ((128, 9, 257), (0, 2), True),   # disjoint axes
+    ((100003,), (0,), False),        # cross-core scalar reduction
+])
+def test_reduce_bf16(op, reference, sign, shape, dims, keepdims):
+    t = Tester()
+    a = np.random.default_rng(42).integers(4, 128, size=shape).astype(np.float32)
+    a.flat[a.size // 2] = 2
+    # Exact BF16 values. Zero padding or interpreting partials as FP16 changes the extremum.
+    a = np.ldexp(a * sign, 120)
+    out = t.store(op(t, t.load(a, 'bfloat16'), dims, keepdims))
+    if a.ndim == 1:
+        t.tile(0, 0, 125)  # Accumulate multiple tiles per core before the atomic store.
+    t.run()
+    assert out.dtype() == dvm.bfloat16
+    np.testing.assert_array_equal(t.convert_from_bf16(t.output(out)), reference(a, axis=dims, keepdims=keepdims))
+
+
+@arg_mark(plat_marks=['platform_ascend910b'], level_mark='level0', card_mark='onecard', essential_mark='essential')
+@pytest.mark.skipif(dvm.Device.arch() != 'AscendC310', reason='BF16 min/max reduction requires C310')
+@pytest.mark.parametrize('op, reference', [(Tester.max, np.max), (Tester.min, np.min)])
+@pytest.mark.parametrize('axis', [0, 1])
+def test_reduce_bf16_special_values(op, reference, axis):
+    tiny = np.float32(2.0 ** -133)  # Smallest positive BF16 subnormal.
+    rows = np.array([1, np.inf, tiny, -tiny, -0.0], dtype=np.float32)
+    a = np.repeat(rows[:, None], 129, axis=1)
+    a[:, -1] = [np.nan, -np.inf, 2 * tiny, -2 * tiny, -0.0]
+    if axis == 0:
+        a = a.T.copy()
+
+    t = Tester()
+    out = t.store(op(t, t.load(a, 'bfloat16'), [axis], False))
+    t.run()
+    actual = t.convert_from_bf16(t.output(out))
+    np.testing.assert_array_equal(actual, reference(a, axis=axis))
+    assert np.signbit(actual[-1])  # The all-negative-zero slice must retain its sign.
+
+
+@arg_mark(plat_marks=['platform_ascend910b'], level_mark='level0', card_mark='onecard', essential_mark='essential')
+@pytest.mark.skipif(dvm.Device.arch() != 'AscendC310', reason='BF16 min/max reduction requires C310')
+@pytest.mark.parametrize('op, reference', [(Tester.max, np.max), (Tester.min, np.min)])
+def test_reduce_bf16_dynamic_axes(op, reference):
+    t = Tester('vector:dyn')
+    x = t.load([-1], 'bfloat16')
+    dims = t.int_array()
+    out = t.store(op(t, x, dims, False))
+    rng = np.random.default_rng(43)
+    for shape, axes in [((13, 257), (-1,)), ((67, 9, 32), (1,)), ((3, 7, 259), (0, 2)), ((1,), (0,))]:
+        a = rng.integers(-127, 128, size=shape).astype(np.float32)
+        t.input(x, t.convert_to_bf16(a))
+        dims.update(axes)
+        t.run()
+        np.testing.assert_array_equal(t.convert_from_bf16(t.output(out)), reference(a, axis=axes))
 
 
 @arg_mark(plat_marks=['platform_ascend910b'], level_mark='level0', card_mark='onecard', essential_mark='essential')

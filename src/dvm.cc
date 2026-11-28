@@ -1551,7 +1551,8 @@ NDObject *Kernel::Permute(NDObject *input, IntArrayRef *dims) {
 }
 
 NDObject *Kernel::_Reduce(int op_type, NDObject *input, IntArrayRef *dims, bool keepdims) {
-  if (input->type_id_ != DataType::kFloat32 && op_type == kSum) {
+  if ((input->type_id_ != kFloat32 && op_type == kSum) ||
+      (input->type_id_ == kBFloat16 && g_system.Arch() != kAiCore_C310)) {
     return nullptr;
   }
   auto obj = new ReduceOp(input, op_type, dims, keepdims);

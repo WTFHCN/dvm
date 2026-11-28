@@ -926,6 +926,20 @@ __simd_callee__ __aicore_inline__ void ReduceLoop4(RegTensor<T> &accum, RegTenso
 
 enum class ReduceLoad { Single, Loop, Loop4 };
 
+template <uint16_t GROUP_COUNT, vReduceOpType RED_TYPE, typename T>
+__simd_callee__ __aicore_inline__ void ReduceXFoldGroups(RegTensor<T> &accum, RegTensor<T> &value,
+                                                       vector_bool mask) {
+  if constexpr (GROUP_COUNT > 1) {
+    if constexpr (RED_TYPE == V_RED_SUM) {
+      vcpadd(accum, accum, mask, MODE_ZEROING);
+    } else {
+      vdintlv(accum, value, accum, accum);
+      BisectReduce<RED_TYPE>(accum, accum, value, mask);
+    }
+    ReduceXFoldGroups<GROUP_COUNT / 2, RED_TYPE, T>(accum, value, mask);
+  }
+}
+
 template <ReduceLoad LOAD, vReduceOpType RED_TYPE, typename T>
 __aicore_inline__ void ReduceXLoop(__ubuf__ T *xd, __ubuf__ T *xn, const vReduceX &op, uint16_t has_tail) {
   constexpr uint32_t vector_lanes = BlockNum(T);
@@ -959,32 +973,24 @@ __aicore_inline__ void ReduceXLoop(__ubuf__ T *xd, __ubuf__ T *xn, const vReduce
           BisectReduce<RED_TYPE>(value, accum, value, tail_mask);
           vsel(accum, value, accum, tail_mask);
         }
-        if constexpr (RED_TYPE == V_RED_SUM) {
+        if constexpr (std::is_same<T, bfloat16_t>::value) {
+          // BF16 has lane-wise min/max but no horizontal min/max instruction.
+          if constexpr (LOAD == ReduceLoad::Single) {
+            vlds(value, xn, offset, BRC_B16);
+            vsel(accum, accum, value, mask);  // Fill inactive lanes with a value from this row.
+          }
+          ReduceXFoldGroups<vector_lanes, RED_TYPE, T>(accum, value, CreateMask<T>());
+          value = accum;
+        } else if constexpr (RED_TYPE == V_RED_SUM) {
           vcadd(value, accum, mask, MODE_ZEROING);
-        }
-        if constexpr (RED_TYPE == V_RED_MAX) {
+        } else if constexpr (RED_TYPE == V_RED_MAX) {
           vcmax(value, accum, mask, MODE_ZEROING);
-        }
-        if constexpr (RED_TYPE == V_RED_MIN) {
+        } else if constexpr (RED_TYPE == V_RED_MIN) {
           vcmin(value, accum, mask, MODE_ZEROING);
         }
         vsts(value, xd, k * dst_stride + i, distValue, mask);
       }
     }
-  }
-}
-
-template <uint16_t GROUP_COUNT, vReduceOpType RED_TYPE, typename T>
-__simd_callee__ __aicore_inline__ void ReduceXFoldGroups(RegTensor<T> &accum, RegTensor<T> &value,
-                                                       vector_bool mask) {
-  if constexpr (GROUP_COUNT > 1) {
-    if constexpr (RED_TYPE == V_RED_SUM) {
-      vcpadd(accum, accum, mask, MODE_ZEROING);
-    } else {
-      vdintlv(accum, value, accum, accum);
-      BisectReduce<RED_TYPE>(accum, accum, value, mask);
-    }
-    ReduceXFoldGroups<GROUP_COUNT / 2, RED_TYPE, T>(accum, value, mask);
   }
 }
 
@@ -1009,13 +1015,13 @@ __aicore_inline__ void ReduceXGroup(__ubuf__ T *xd, __ubuf__ T *xn, const vReduc
         uint32_t count = min(remaining, rows_per_vector);
         remaining -= count;
         vlds(accum, xn, k * src_stride + i * vector_lanes, NORM);
-        if constexpr (RED_TYPE == V_RED_SUM) {
+        if constexpr (std::is_same<T, bfloat16_t>::value) {
+          ReduceXFoldGroups<32 / sizeof(T), RED_TYPE, T>(accum, value, mask);
+        } else if constexpr (RED_TYPE == V_RED_SUM) {
           vcgadd(accum, accum, mask, MODE_ZEROING);
-        }
-        if constexpr (RED_TYPE == V_RED_MAX) {
+        } else if constexpr (RED_TYPE == V_RED_MAX) {
           vcgmax(accum, accum, mask, MODE_ZEROING);
-        }
-        if constexpr (RED_TYPE == V_RED_MIN) {
+        } else if constexpr (RED_TYPE == V_RED_MIN) {
           vcgmin(accum, accum, mask, MODE_ZEROING);
         }
         ReduceXFoldGroups<ROW_BYTES / 32, RED_TYPE, T>(accum, value, mask);
@@ -2457,6 +2463,10 @@ DEF_DISP_SIMD(V_RMAX_X_FP16, (ReduceX<V_RED_MAX, half>(pc, head, tile)))
 DEF_DISP_SIMD(V_RMAX_Y_FP16, (ReduceY<V_RED_MAX, half>(pc, head, tile)))
 DEF_DISP_SIMD(V_RMIN_X_FP16, (ReduceX<V_RED_MIN, half>(pc, head, tile)))
 DEF_DISP_SIMD(V_RMIN_Y_FP16, (ReduceY<V_RED_MIN, half>(pc, head, tile)))
+DEF_DISP_SIMD(V_RMAX_X_BF16, (ReduceX<V_RED_MAX, bfloat16_t>(pc, head, tile)))
+DEF_DISP_SIMD(V_RMAX_Y_BF16, (ReduceY<V_RED_MAX, bfloat16_t>(pc, head, tile)))
+DEF_DISP_SIMD(V_RMIN_X_BF16, (ReduceX<V_RED_MIN, bfloat16_t>(pc, head, tile)))
+DEF_DISP_SIMD(V_RMIN_Y_BF16, (ReduceY<V_RED_MIN, bfloat16_t>(pc, head, tile)))
 DEF_DISP_SIMD(V_RSUM_JOIN, ReduceJoin(pc, head, tile))
 DEF_DISP_SIMD(V_SEL, Select<float>(pc, head, tile))
 DEF_DISP_SIMD(V_POW, Power(pc, head, tile))
@@ -2515,6 +2525,7 @@ DEF_DISP_SIMD(V_REMOVEPAD_U16, RemovePad<uint16_t>(pc, head, tile))
 DEF_DISP_SIMD(V_REMOVEPAD, RemovePad<uint32_t>(pc, head, tile))
 DEF_DISP_SIMD(V_ATOMICCUM, AtomicCum<float>(pc, head, tile))
 DEF_DISP_SIMD(V_ATOMICCUM_FP16, AtomicCum<half>(pc, head, tile))
+DEF_DISP_SIMD(V_ATOMICCUM_BF16, AtomicCum<bfloat16_t>(pc, head, tile))
 
 DEF_DISP_SIMD(V_CAST_BF16_TO_FP32, (Cast<float, bfloat16_t>(pc, head, tile)))
 DEF_DISP_SIMD(V_CAST_BF16_TO_INT32, (Cast<int32_t, bfloat16_t, RoundMode::CAST_ROUND>(pc, head, tile)))

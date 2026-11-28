@@ -202,14 +202,19 @@ enum vSimdInsnID {
   V_RSUM_JOIN,
   V_RMAX_X,
   V_RMAX_X_FP16,
+  V_RMAX_X_BF16,  // [c310]
   V_RMAX_Y,
   V_RMAX_Y_FP16,
+  V_RMAX_Y_BF16,  // [c310]
   V_RMIN_X,
   V_RMIN_X_FP16,
+  V_RMIN_X_BF16,  // [c310]
   V_RMIN_Y,
   V_RMIN_Y_FP16,
+  V_RMIN_Y_BF16,  // [c310]
   V_ATOMICCUM,
   V_ATOMICCUM_FP16,
+  V_ATOMICCUM_BF16,  // [c310]
   V_ELEMENT_ANY,
 
   V_ONE_HOT,
